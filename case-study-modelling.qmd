@@ -1,0 +1,23 @@
+---
+title: "Case Study Modelling"
+format: pdf
+editor: visual
+---
+
+## EDA
+
+## Predictive Modelling
+
+-Take a look at the ranges and histograms of input and output variables. Do any of the variables require transformations? If so, what transformations are appropriate?
+
+– Try fitting a linear regression model – does it fit well? If not, try fitting a more complex (nonlinear) model. Does the data give any evidence for nonlinearity?
+
+– Does there appear to be interaction effects? If so, which variables interact (e.g., x1 and x2), and how do they interact (e.g., x1x2, or more complex interactions)?
+
+## Scientific Inference
+
+– How does each of the three parameters (Re, F r, St) affect the distribution of particle cluster volumes? Do these effects appear linear or nonlinear? Try to interpret these effects using what the three parameters mean physically.
+
+– Are the effects identified above similar over all response variables (i.e., over the distribution mean, variance, skewness and kurtosis), or are there effects that differ between, say, the mean and variance? Try to interpret any differences in effects using the three parameters mean physically.
+
+– Try to interpret any interaction effects using what the three parameters mean physically.

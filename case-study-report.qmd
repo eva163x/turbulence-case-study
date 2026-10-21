@@ -1,0 +1,24 @@
+---
+title: "STA325 Case Study Report"
+format: pdf
+editor: visual
+author: "Eva Aggarwal, [add names]"
+---
+
+short report describing your findings on the scientific problem. This should be no more than 4 pages (including figures and tables), and should have four sections:
+
+## Introduction
+
+An introduction outlining key research objectives and how your model achieves such objectives.
+
+## Methodology
+
+A methodology section describing your statistical model, how your model is fit from data, and justifying why your model is appropriate given the problem or dataset
+
+## Results
+
+A results section discussing your predictive results (don’t forget uncertainty!), as well as insights on the scientific problem. You should also submit your predictions on the hold-out set in data-test.csv, in the form of a .csv file.
+
+## Conclusion
+
+A conclusion section summarizing key findings of your study.
