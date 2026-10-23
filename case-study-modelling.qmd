@@ -4,7 +4,156 @@ format: pdf
 editor: visual
 ---
 
+```{r}
+#installing packages
+library(tidyverse)
+library(knitr)
+library(tidymodels)
+library(dplyr)
+library(GGally)
+```
+
+## Data Cleaning
+
+```{r}
+data_train <- read.csv("data-train.csv")
+data_test <- read.csv("data-test.csv")
+```
+
+```{r}
+summary(data_train)
+```
+
+X = Predictors: St, Re, Fr
+
+y = Output : probability distribution, or
+
+Y = first four raw moments:
+
+-   R_moment_1 E\[X\]
+
+-   R_moment_2 E\[X2\]
+
+-   R_moment_3 E\[X3\]
+
+-   R_moment_4 E\[X4\]
+
+But, we want central moments, so actual response variables are:
+
+-   Mean: μ = E(X). This measures a distribution’s centrality.
+
+-   Standard deviation: σ = pE\[(X − μ)2\]. This measures a distribution’s variabilityaround its mean.
+
+-   Skewness: γ = E\[(X − μ)3\]/σ3. This measures a distribution’s degree of asymmetry.
+
+-   Kurtosis: κ = E\[(X − μ)4\]/σ4. This measures how “heavy” a distribution’s tails are.
+
+```{r}
+#data cleaning + transforming
+cleaned_data_train <- data_train |> mutate(
+  mean = R_moment_1,
+  var = R_moment_2 - R_moment_1^2, #variance = E[X^2] - (E[X])^2
+  sd = sqrt(var), #sd = root(var)
+  c3 = R_moment_3 - mean^3 - 3*mean*R_moment_2 + 3*(mean^2)*R_moment_1, # expanded using linearity of E[X]
+  c4 = R_moment_4 - 4*R_moment_1*R_moment_3 + 6*R_moment_1^2*R_moment_2 - 3*R_moment_1^4, # expanded using linearity of E[X]
+  skew = c3 / sd^3,
+  kurt = c4 / sd^4
+) |>
+  select(St, Re, Fr, mean, sd, skew, kurt)
+```
+
+```{r}
+#transform training + test data
+transform_preds <- function(df) {
+  df |> mutate(
+    Fr_cat = factor(Fr, levels = c(Inf, 0.3, 0.052),
+                    labels = c("none", "moderate", "strong")),
+    Re_cat = factor(Re, levels = c(90, 224, 398))
+    )
+}
+
+cleaned_data_train <- transform_preds(cleaned_data_train)
+cleaned_data_test <- transform_preds(data_test)
+```
+
+```{r}
+table(cleaned_data_train$Re_cat, cleaned_data_train$Fr_cat)
+```
+
+```{r}
+head(cleaned_data_train)
+```
+
 ## EDA
+
+-   Individual ranges
+
+```{r}
+hist(cleaned_data_train$St)
+```
+
+```{r}
+hist(cleaned_data_train$Re)
+```
+
+```{r}
+hist(cleaned_data_train$Fr)
+```
+
+```{r}
+unique(cleaned_data_train$Fr)
+```
+
+Based on our EDA so far, we can see that St seems to be doing fine. However, Re and Fr are slightly problematic.
+
+1.  Fr has a max of Inf (infinity), which is an impossible value, therefore skewing our models and introducing NaNs in calculations.
+    1.  from slides: Particle property (eﬀect of gravity or fall speed): Fr= ∞, 0.3
+
+        (cumulonimbus clouds), 0.052 (cumulus clouds). The stronger gravity, the
+
+        larger the domain.-- so, three levels
+2.  from slides: In the real world, we know Re is very large (O(10\^7) or more.
+    1.  (so, probs should treat this as a factor/cat so as not to skew model w big nums, esp linear models)
+3.  from slides Particle property (eﬀect of inertia; e.g. size. density): fifteen St in the range of 0 ≤St≤3. The larger the St, the more diﬃcult to solve the particle’s equation
+
+```{r}
+#Re & Fr values remain same in train + test, so consider them factors
+unique(cleaned_data_train$Re); unique(cleaned_data_train$Fr);
+unique(data_test$Re); unique(data_test$Fr)
+```
+
+1.  Interactions
+
+```{r}
+plot(cleaned_data_train$St, cleaned_data_train$Re)
+```
+
+```{r}
+pairs(cleaned_data_train)
+```
+
+```{r}
+fit <- lm(mean ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
+par(mfrow = c(2, 2)); plot(fit)
+```
+
+Linear model does not fit well, so following transformations are recommended:
+
+-   fitted vals for mean are negative, so predicting log(mean) might be easier
+
+```{r}
+cleaned_data_train <- cleaned_data_train |>mutate(log_mean = log(mean))
+```
+
+```{r}
+fit2 <- lm(log_mean ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
+par(mfrow = c(2, 2)); plot(fit2)
+```
+
+```{r}
+fit_sd <- lm(sd ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
+par(mfrow = c(2, 2)); plot(fit_sd)
+```
 
 ## Predictive Modelling
 
