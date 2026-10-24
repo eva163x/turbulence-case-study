@@ -13,7 +13,82 @@ An introduction outlining key research objectives and how your model achieves su
 
 ## Methodology
 
-A methodology section describing your statistical model, how your model is fit from data, and justifying why your model is appropriate given the problem or dataset
+A methodology section describing your statistical model, how your model is fit from data, and justifying why your model is appropriate given the problem or dataset.
+
+### Data Cleaning
+
+```{r}
+# load packages
+library(tidyverse)
+library(knitr)
+library(tidymodels)
+library(dplyr)
+```
+
+```{r}
+# load data
+data_train <- read.csv("data-train.csv")
+data_test  <- read.csv("data-test.csv")
+
+#compute central moments
+cleaned_data_train <- data_train |>
+  mutate(
+    mean = R_moment_1,
+    var  = R_moment_2 - R_moment_1^2,   # Var = E[X^2] - (E[X])^2
+    sd   = sqrt(var),
+    c3   = R_moment_3 - mean^3 - 3*mean*R_moment_2 + 3*(mean^2)*R_moment_1,   # expanded via linearity of E
+    c4   = R_moment_4 - 4*R_moment_1*R_moment_3 + 6*R_moment_1^2*R_moment_2 - 3*R_moment_1^4,
+    skew = c3 / sd^3,
+    kurt = c4 / sd^4
+  ) |>
+  select(St, Re, Fr, mean, sd, skew, kurt)
+
+# NEW: sanity checks (all should be TRUE)
+stopifnot(all(cleaned_data_train$sd > 0),
+          all(cleaned_data_train$skew > 0),
+          all(cleaned_data_train$kurt >= 1))
+```
+
+```{r}
+# transform predictors (applied identically to train + test)
+transform_preds <- function(df) {
+  df |>
+    mutate(
+      Fr_cat = factor(Fr, levels = c(Inf, 0.3, 0.052),
+                      labels = c("none", "moderate", "strong")),
+      Re_cat = factor(Re, levels = c(90, 224, 398)),
+      log_St = log(St)   # NEW (optional): spreads out St values above 1
+    )
+}
+
+cleaned_data_train <- transform_preds(cleaned_data_train)
+cleaned_data_test  <- transform_preds(data_test)
+```
+
+```{r}
+#log-transform responses (all are strictly positive)
+cleaned_data_train <- cleaned_data_train |>
+  mutate(
+    log_mean = log(mean),
+    log_sd   = log(sd),
+    log_skew = log(skew),
+    log_kurt = log(kurt)
+  )
+```
+
+```{r}
+#before/after histograms
+resp_long <- cleaned_data_train |>
+  select(mean, sd, skew, kurt, log_mean, log_sd, log_skew, log_kurt) |>
+  pivot_longer(everything()) |>
+  mutate(scale = if_else(str_starts(name, "log_"), "log", "raw"),
+         stat  = str_remove(name, "log_"))
+
+ggplot(resp_long, aes(value)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(scale ~ stat, scales = "free", nrow = 2) +
+  labs(title = "Response distributions: raw vs. log scale")
+```
 
 ## Results
 
