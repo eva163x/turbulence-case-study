@@ -1,23 +1,65 @@
 ---
 title: "Case Study Modelling"
-format: pdf
+format:
+  pdf:
+    toc: true
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show R code"
+    embed-resources: true
+execute:
+  warning: true
+  message: false
+  cache: false
+params:
+  data_dir: "."
+  results_dir: "abbas-results"
+  bootstrap_replicates: 200
+  run_inference: true
 editor: visual
 ---
 
+This working notebook retains the team's data cleaning, EDA and initial linear
+fits. The Predictive Modelling and Scientific Inference sections add Abbas's
+spline and random-forest comparison, with a common linear reference. Additional
+families can be registered at the marked extension point; they reuse the same
+folds, evaluation, diagnostics, inference and exports. This is the modelling
+notebook, not the final research report.
+
+
 ```{r}
-#installing packages
-library(tidyverse)
-library(knitr)
-library(tidymodels)
+#| label: setup
+required <- c("dplyr", "ranger", "knitr")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing)) stop("Install required packages: ", paste(missing, collapse = ", "))
+
+responses <- c("mean", "sd", "skew", "kurt")
+response_labels <- c(mean = "Mean", sd = "Standard deviation",
+                     skew = "Skewness", kurt = "Kurtosis")
+settings <- list(cv_seed = 325L, folds = 5L, trees = 500L,
+                 bootstrap_seed = 2026L,
+                 bootstrap_replicates = as.integer(params$bootstrap_replicates))
+if (isTRUE(params$run_inference) && settings$bootstrap_replicates < 100L)
+  stop("Use at least 100 replicates for the exploratory percentile intervals.")
+results_dir <- params$results_dir
+dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+write_result <- function(x, filename) {
+  write.csv(x, file.path(results_dir, filename), row.names = FALSE)
+}
+show_table <- function(x, digits = 4, caption = NULL) {
+  knitr::kable(x, digits = digits, row.names = FALSE, caption = caption)
+}
+# Existing cleaning and EDA below use dplyr.
 library(dplyr)
-library(GGally)
 ```
 
 ## Data Cleaning
 
 ```{r}
-data_train <- read.csv("data-train.csv")
-data_test <- read.csv("data-test.csv")
+data_train <- read.csv(file.path(params$data_dir, "data-train.csv"))
+data_test <- read.csv(file.path(params$data_dir, "data-test.csv"))
 ```
 
 ```{r}
@@ -42,7 +84,7 @@ But, we want central moments, so actual response variables are:
 
 -   Mean: μ = E(X). This measures a distribution’s centrality.
 
--   Standard deviation: σ = pE\[(X − μ)2\]. This measures a distribution’s variabilityaround its mean.
+-   Standard deviation: $\sigma=\sqrt{E[(X-\mu)^2]}$. This measures variability around the mean.
 
 -   Skewness: γ = E\[(X − μ)3\]/σ3. This measures a distribution’s degree of asymmetry.
 
@@ -97,24 +139,24 @@ hist(cleaned_data_train$Re)
 ```
 
 ```{r}
-hist(cleaned_data_train$Fr)
+barplot(table(cleaned_data_train$Fr_cat),
+        main = "Gravity regimes", xlab = "Fr regime", ylab = "Simulation count")
 ```
 
 ```{r}
 unique(cleaned_data_train$Fr)
 ```
 
-Based on our EDA so far, we can see that St seems to be doing fine. However, Re and Fr are slightly problematic.
+The data include three Re levels and three meaningful Fr regimes. In particular,
+`Fr = Inf` is the no-gravity limit, not an impossible or missing measurement.
+Smaller Fr represents stronger gravitational influence in this study. We retain
+all regimes and use the factors prepared above. The categorical representation
+matches the finite simulation levels and test design; large numerical values
+alone would not justify treating a variable as a factor.
 
-1.  Fr has a max of Inf (infinity), which is an impossible value, therefore skewing our models and introducing NaNs in calculations.
-    1.  from slides: Particle property (eﬀect of gravity or fall speed): Fr= ∞, 0.3
-
-        (cumulonimbus clouds), 0.052 (cumulus clouds). The stronger gravity, the
-
-        larger the domain.-- so, three levels
-2.  from slides: In the real world, we know Re is very large (O(10\^7) or more.
-    1.  (so, probs should treat this as a factor/cat so as not to skew model w big nums, esp linear models)
-3.  from slides Particle property (eﬀect of inertia; e.g. size. density): fifteen St in the range of 0 ≤St≤3. The larger the St, the more diﬃcult to solve the particle’s equation
+St describes particle inertia and is kept numeric. The slides consider values
+up to 3; modelling below examines whether the response relationships are linear
+or curved.
 
 ```{r}
 #Re & Fr values remain same in train + test, so consider them factors
@@ -129,15 +171,18 @@ plot(cleaned_data_train$St, cleaned_data_train$Re)
 ```
 
 ```{r}
-pairs(cleaned_data_train)
+pairs(cleaned_data_train[c("St", "Re", "mean", "sd", "skew", "kurt")])
 ```
 
 ```{r}
 fit <- lm(mean ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
 par(mfrow = c(2, 2)); plot(fit)
+par(mfrow = c(1, 1))
 ```
 
-Linear model does not fit well, so following transformations are recommended:
+The initial linear diagnostics motivate checking a response transformation and
+more flexible specifications. The shared CV comparison below evaluates those
+choices rather than assuming a transformation will improve prediction:
 
 -   fitted vals for mean are negative, so predicting log(mean) might be easier
 
@@ -148,25 +193,617 @@ cleaned_data_train <- cleaned_data_train |>mutate(log_mean = log(mean))
 ```{r}
 fit2 <- lm(log_mean ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
 par(mfrow = c(2, 2)); plot(fit2)
+par(mfrow = c(1, 1))
 ```
 
 ```{r}
 fit_sd <- lm(sd ~ Re_cat + Fr_cat + St, data = cleaned_data_train)
 par(mfrow = c(2, 2)); plot(fit_sd)
+par(mfrow = c(1, 1))
 ```
+
 
 ## Predictive Modelling
 
--Take a look at the ranges and histograms of input and output variables. Do any of the variables require transformations? If so, what transformations are appropriate?
+Questions guiding the comparison are whether transformations improve prediction,
+whether nonlinear St effects help relative to a simple linear reference, and
+whether gravity-specific St relationships are supported. We fit each of the four
+summaries separately within a family and select settings using common CV folds.
+The earlier exploratory fits above remain available for comparison; the reference
+below uses joint Re–Fr group intercepts, so it is a distinct, explicitly stated
+specification.
 
-– Try fitting a linear regression model – does it fit well? If not, try fitting a more complex (nonlinear) model. Does the data give any evidence for nonlinearity?
+### Reuse the team's cleaned data
 
-– Does there appear to be interaction effects? If so, which variables interact (e.g., x1 and x2), and how do they interact (e.g., x1x2, or more complex interactions)?
+The original cleaning formulas above produce the required mean, SD, skewness and
+ordinary kurtosis. No duplicate response transformation pipeline is introduced.
+The aliases below provide one stable interface for every registered model family.
+Raw moment columns are never used as predictors.
+
+```{r}
+#| label: reuse-cleaned-data
+train_raw <- data_train
+test_raw <- data_test
+train <- cleaned_data_train
+test <- cleaned_data_test
+stopifnot(!anyNA(train_raw), !anyNA(test_raw),
+          !anyDuplicated(train_raw[c("St", "Re", "Fr")]),
+          all(is.finite(as.matrix(train[responses]))),
+          all(as.matrix(train[responses]) > 0))
+train$group <- interaction(train$Re_cat, train$Fr_cat, drop = TRUE)
+test$group <- interaction(test$Re_cat, test$Fr_cat, drop = TRUE)
+stopifnot(all(as.character(test$group) %in% levels(train$group)))
+test$group <- factor(test$group, levels = levels(train$group))
+input_files <- file.path(params$data_dir, c("data-train.csv", "data-test.csv"))
+write_result(data.frame(file = basename(input_files), md5 = unname(tools::md5sum(input_files))),
+             "input-checksums.csv")
+```
+
+There are `r nrow(train)` labelled simulations and `r nrow(test)` test settings.
+The Re = 398, Fr = 0.3 regime is absent. Inference below is restricted to supported
+regimes. The response ranges and boundary checks are recorded before fitting.
+
+```{r}
+#| label: response-ranges
+ranges <- do.call(rbind, lapply(responses, function(y) {
+  data.frame(response = response_labels[y], minimum = min(train[[y]]),
+             median = median(train[[y]]), maximum = max(train[[y]]))
+}))
+show_table(ranges, digits = 6)
+
+support <- do.call(rbind, lapply(seq_len(nrow(test)), function(i) {
+  observed <- train$St[train$group == test$group[i]]
+  data.frame(test_row = i, test_raw[i, c("St", "Re", "Fr")],
+             outside_group_St_range = test$St[i] < min(observed) |
+                                      test$St[i] > max(observed))
+}))
+write_result(support, "test-support.csv")
+show_table(support[support$outside_group_St_range, ],
+           caption = "Test settings outside their group's observed St range.")
+```
+
+Positive responses span substantially different scales. We consider raw and log
+response models rather than assuming one transformation is suitable for every
+outcome. A log fit is converted back by exponentiation. This predicts a fitted
+geometric-scale response, not an automatically bias-corrected conditional
+arithmetic mean. All errors below are calculated after returning to the original
+response scale.
+
+### Common validation and model interfaces
+
+We use ordinary five-fold cross-validation, with identical folds for every family
+and response. Each candidate is fitted using four folds and predicts the fifth.
+Spline knots and parameters are learned from that training subset only.
+Candidate selection minimises original-scale MSE separately for each response.
+RMSE is its square root. Candidates that fail fitting or produce nonpositive
+validation predictions are recorded and excluded because these responses are
+positive in the supplied dataset.
+
+These are **CV model-selection estimates**, not independent final test errors.
+Selecting the lowest score can introduce optimism. Folds overlap in their training
+data, and fold wins are descriptive rather than independent significance tests.
+No hidden test response is used for tuning. Comparisons concern the observed
+regimes; they do not establish performance at new Re or Fr levels.
+
+```{r}
+#| label: shared-folds-and-interfaces
+set.seed(settings$cv_seed)
+fold <- sample(rep(seq_len(settings$folds), length.out = nrow(train)))
+stopifnot(all(vapply(seq_len(settings$folds), function(k)
+  all(table(train$group[fold != k]) > 0), logical(1))))
+write_result(data.frame(row = seq_len(nrow(train)), fold = fold), "cv-folds.csv")
+
+prepare_target <- function(d, response, scale) {
+  d$target <- if (scale == "log") log(d[[response]]) else d[[response]]
+  d
+}
+fit_regression <- function(d, response, cfg, formula) {
+  d <- prepare_target(d, response, cfg$scale)
+  # Bind the spline df to the formula environment for safe prediction later.
+  model <- lm(formula, data = d)
+  if (model$rank < length(coef(model))) stop("Rank-deficient regression fit")
+  list(model = model, scale = cfg$scale)
+}
+predict_regression <- function(object, newdata) {
+  z <- as.numeric(predict(object$model, newdata = newdata))
+  if (object$scale == "log") exp(z) else z
+}
+fit_forest <- function(d, response, cfg, seed) {
+  d <- prepare_target(d, response, cfg$scale)
+  model <- ranger::ranger(target ~ St + Re_cat + Fr_cat, data = d,
+    num.trees = settings$trees, mtry = cfg$mtry, min.node.size = cfg$node,
+    respect.unordered.factors = "partition", importance = "impurity",
+    num.threads = 1L, seed = seed)
+  list(model = model, scale = cfg$scale)
+}
+predict_forest <- function(object, newdata) {
+  z <- as.numeric(predict(object$model, data = newdata)$predictions)
+  if (object$scale == "log") exp(z) else z
+}
+```
+
+### Family registry: add future modelling here
+
+Each registered family provides a candidate grid, a fit function, and a prediction
+function returning **one original-scale value per row**. The shared engine then
+performs CV, selects settings, refits, diagnoses and exports predictions. Main
+families also enter the common bootstrap and inference sections automatically.
+
+#### Linear reference
+
+The fixed reference is $\log(Y)=\alpha_{g(Re,Fr)}+\beta St+\epsilon$.
+It supplies a simple comparison, rather than presuming nonlinear models improve
+every response. Group intercepts permit joint differences between the observed
+Re–Fr regimes.
+
+```{r}
+#| label: register-linear-reference
+families <- list()
+families$linear <- list(
+  label = "Linear reference", role = "baseline",
+  description = "Fixed log-linear regression with group intercepts and a straight St effect.",
+  grid = data.frame(scale = "log"),
+  fit = function(d, response, cfg, seed)
+    fit_regression(d, response, cfg, target ~ group + St),
+  predict = predict_regression
+)
+```
+
+#### Natural cubic spline regression
+
+For each response we consider a shared St shape,
+
+$$h(Y)=\alpha_{g(Re,Fr)}+f(St)+\epsilon,$$
+
+or gravity-specific St shapes,
+
+$$h(Y)=\alpha_{g(Re,Fr)}+f_{Fr}(St)+\epsilon,$$
+
+where $h$ is identity or log. We compare 2, 3 and 4 spline degrees of freedom.
+The gravity-specific option shares its shape across Re within a gravity level.
+It is not eight unrelated curves. Natural splines are linear beyond their boundary
+knots on the modelled scale; that restriction does not guarantee extrapolation
+accuracy. Interpret fitted functions and contrasts rather than individual basis
+coefficients. A selected interaction is not, by itself, a significance test.
+
+```{r}
+#| label: register-spline
+families$spline <- list(
+  label = "Natural cubic spline", role = "main",
+  description = "Group intercepts, controlled smooth St effects, and optional gravity-specific shapes.",
+  grid = expand.grid(df = c(2L, 3L, 4L), shape = c("shared", "gravity"),
+                     scale = c("log", "raw"), stringsAsFactors = FALSE),
+  fit = function(d, response, cfg, seed) {
+    df_value <- cfg$df
+    formula <- if (cfg$shape == "shared")
+      target ~ group + splines::ns(St, df = df_value) else
+      target ~ group + splines::ns(St, df = df_value) +
+               splines::ns(St, df = df_value):Fr_cat
+    fit_regression(d, response, cfg, formula)
+  },
+  predict = predict_regression
+)
+```
+
+#### Random forest regression
+
+The forest averages $B=500$ regression trees,
+$\widehat f(x)=B^{-1}\sum_{b=1}^{B}\widehat T_b(x)$. Each tree uses a bootstrap
+sample; each split considers a random subset of the three predictors. We compare
+one or two candidate predictors per split, minimum node-size settings 3 or 8,
+and raw or log responses. Considering all three predictors would be bagging under
+the lecture's distinction, so that option is excluded here. Tree splits can
+capture interactions without a prescribed interaction formula. Interpretation
+uses fitted comparisons and descriptive RSS importance, not causal effects.
+
+```{r}
+#| label: register-forest
+families$forest <- list(
+  label = "Random forest", role = "main",
+  description = "An average of regression trees with randomised split predictors; flexible interactions.",
+  grid = expand.grid(mtry = c(1L, 2L), node = c(3L, 8L),
+                     scale = c("log", "raw"), stringsAsFactors = FALSE),
+  fit = fit_forest, predict = predict_forest
+)
+```
+
+#### Team extension point
+
+Add a registration chunk **here, before evaluation**. Existing data preparation,
+folds, scoring and inference code do not need rewriting. This quadratic example
+is intentionally not executed; it illustrates the interface and is not a third
+claimed contribution. Replace its description and candidate grid for a new family.
+Additional families may require packages beyond the two main implementations.
+
+```{r}
+#| label: example-new-family
+#| eval: false
+families$quadratic <- list(
+  label = "Quadratic regression", role = "main",
+  description = "Group intercepts with a quadratic St effect.",
+  grid = expand.grid(scale = c("raw", "log"), stringsAsFactors = FALSE),
+  fit = function(d, response, cfg, seed)
+    fit_regression(d, response, cfg, target ~ group + St + I(St^2)),
+  predict = predict_regression
+)
+```
+
+### Common evaluation and selected specifications
+
+```{r}
+#| label: evaluate-families
+configuration_text <- function(cfg) paste(names(cfg), as.character(cfg[1, ]),
+                                          sep = "=", collapse = "; ")
+evaluate_family <- function(id, family) {
+  output <- list()
+  for (response in responses) {
+    grid <- family$grid
+    scores <- rep(Inf, nrow(grid)); failures <- rep("", nrow(grid))
+    p <- matrix(NA_real_, nrow(train), nrow(grid))
+    for (j in seq_len(nrow(grid))) {
+      for (k in seq_len(settings$folds)) {
+        index <- fold == k
+        p[index, j] <- tryCatch({
+          object <- family$fit(train[!index, ], response, grid[j, , drop = FALSE],
+                               settings$cv_seed + k)
+          prediction <- family$predict(object, train[index, ])
+          if (length(prediction) != sum(index)) stop("Wrong prediction length")
+          prediction
+        }, error = function(e) {
+          failures[j] <<- paste(failures[j], conditionMessage(e), sep = "; ")
+          rep(NA_real_, sum(index))
+        })
+      }
+      if (all(is.finite(p[, j])) && all(p[, j] > 0)) {
+        scores[j] <- mean((train[[response]] - p[, j])^2)
+      } else if (!nzchar(failures[j])) failures[j] <- "Nonfinite or nonpositive validation prediction"
+    }
+    if (!any(is.finite(scores))) stop("No valid candidates for ", id, ": ", response)
+    best <- which.min(scores); cfg <- grid[best, , drop = FALSE]
+    object <- family$fit(train, response, cfg, settings$cv_seed)
+    test_prediction <- family$predict(object, test)
+    stopifnot(length(test_prediction) == nrow(test),
+              all(is.finite(test_prediction)), all(test_prediction > 0))
+    output[[response]] <- list(
+      configuration = cfg, object = object,
+      candidates = cbind(grid, CV_MSE = scores, status = ifelse(is.finite(scores), "valid", failures)),
+      cv_prediction = p[, best], test_prediction = test_prediction,
+      score = data.frame(family = id, label = family$label, response = response,
+                          CV_MSE = scores[best], CV_RMSE = sqrt(scores[best]),
+                          configuration = configuration_text(cfg)))
+    write_result(output[[response]]$candidates, paste0("candidates-", id, "-", response, ".csv"))
+  }
+  output
+}
+fits <- lapply(names(families), function(id) evaluate_family(id, families[[id]]))
+names(fits) <- names(families)
+score_table <- do.call(rbind, lapply(fits, function(family)
+  do.call(rbind, lapply(family, function(x) x$score))))
+rownames(score_table) <- NULL
+cv_predictions <- do.call(rbind, lapply(names(fits), function(id)
+  do.call(rbind, lapply(responses, function(y) data.frame(
+    family = id, response = y, row = seq_len(nrow(train)), fold = fold,
+    observed = train[[y]], predicted = fits[[id]][[y]]$cv_prediction)))))
+write_result(score_table, "cv-selection-scores.csv")
+write_result(cv_predictions, "cv-predictions.csv")
+show_table(score_table[c("label", "response", "CV_RMSE", "configuration")], digits = 6)
+```
+
+Compare errors **within a response** because the four summaries have different
+units and scales. A larger kurtosis RMSE does not mean kurtosis is intrinsically
+less accurately predicted than mean. More complex families need not beat the
+linear reference. Individual fold wins and relative errors can be explored below;
+neither establishes statistical significance.
+
+```{r}
+#| label: fold-level-errors
+fold_scores <- do.call(rbind, lapply(split(cv_predictions,
+  interaction(cv_predictions$family, cv_predictions$response, cv_predictions$fold)),
+  function(d) data.frame(family = d$family[1], response = d$response[1],
+    fold = d$fold[1], RMSE = sqrt(mean((d$observed - d$predicted)^2)))))
+write_result(fold_scores, "cv-fold-scores.csv")
+```
+
+### Prediction diagnostics
+
+Held-out predictions should lie near the diagonal. Residuals should be inspected
+for systematic patterns, unequal spread and unusual cases. Training residuals
+are descriptive fit diagnostics; the CV predictions supply the out-of-fold
+comparison. We do not discard unusual simulation settings automatically.
+
+```{r}
+#| label: diagnostic-plots
+#| fig-width: 11
+#| fig-height: 7
+#| fig-cap: "Held-out predictions (top row) and training residuals (bottom row), by response. Each panel identifies its family."
+for (id in names(families)) {
+  par(mfrow = c(2, 4), mar = c(4, 4, 3, 1))
+  for (y in responses) {
+    p <- fits[[id]][[y]]$cv_prediction; limits <- range(c(train[[y]], p))
+    plot(train[[y]], p, log = "xy", xlim = limits, ylim = limits, pch = 16,
+         cex = .6, col = "#146c94", xlab = "Observed", ylab = "CV prediction",
+         main = paste(families[[id]]$label, y)); abline(0, 1, lty = 2)
+  }
+  for (y in responses) {
+    selected <- fits[[id]][[y]]
+    p <- families[[id]]$predict(selected$object, train)
+    scale <- if ("scale" %in% names(selected$configuration)) selected$configuration$scale else "raw"
+    observed <- train[[y]]
+    if (scale == "log") { p <- log(p); observed <- log(observed) }
+    plot(p, observed - p, pch = 16, cex = .6, col = "#146c94",
+         xlab = paste("Fitted (", scale, "scale)"), ylab = "Residual",
+         main = paste(families[[id]]$label, y)); abline(h = 0, lty = 2)
+  }
+}
+par(mfrow = c(1, 1))
+```
+
 
 ## Scientific Inference
 
-– How does each of the three parameters (Re, F r, St) affect the distribution of particle cluster volumes? Do these effects appear linear or nonlinear? Try to interpret these effects using what the three parameters mean physically.
+The scientific questions are how each parameter relates to the cluster-volume
+distribution, whether those relationships are linear or nonlinear, whether the
+mean, spread and tails respond similarly, and whether input relationships depend
+on one another. The common inference procedure and family comparisons below
+address these questions. Additional registered main families automatically enter
+this section, with interpretation updated after reviewing their results.
 
-– Are the effects identified above similar over all response variables (i.e., over the distribution mean, variance, skewness and kurtosis), or are there effects that differ between, say, the mean and variance? Try to interpret any differences in effects using the three parameters mean physically.
+### Shared bootstrap inference
 
-– Try to interpret any interaction effects using what the three parameters mean physically.
+Inference asks: how does St relate to each response; how do Re and Fr comparisons
+differ; and does a change in mean accompany a change in variability or tails?
+We inspect fitted functions and compare predictions at supported settings.
+
+For each selected main model, ordinary bootstrap samples draw simulation rows
+with replacement. We refit the fixed specification and take 2.5th and 97.5th
+percentiles for exploratory 95% fit intervals and differences. These are
+pointwise intervals, conditional on selected settings. They omit model-selection
+uncertainty, are not corrected for multiple comparisons, and are not future
+prediction intervals. Because the settings are designed simulations, interpret
+the intervals as approximate stability evidence. Replicate-level information
+needed to quantify the original moment estimates' uncertainty is unavailable.
+
+```{r}
+#| label: inference-grids
+main_ids <- names(families)[vapply(families, function(x) x$role == "main", logical(1))]
+groups <- unique(train[c("Re", "Fr", "Re_cat", "Fr_cat", "group")])
+profile_grid <- do.call(rbind, lapply(seq_len(nrow(groups)), function(j) {
+  group <- groups[j, ]; observed <- train$St[train$group == group$group]
+  d <- group[rep(1, 60), ]; d$St <- seq(min(observed), max(observed), length.out = 60)
+  d
+}))
+st_grid <- groups[rep(seq_len(nrow(groups)), each = 2), ]
+st_grid$St <- rep(c(.2, 1), nrow(groups))
+condition_grid <- groups; condition_grid$St <- .5
+inference_grid <- rbind(profile_grid, st_grid, condition_grid)
+
+set.seed(settings$bootstrap_seed)
+bootstrap_rows <- if (isTRUE(params$run_inference))
+  replicate(settings$bootstrap_replicates,
+            sample.int(nrow(train), replace = TRUE), simplify = FALSE) else list()
+
+profiles <- list(); st_comparisons <- list(); condition_comparisons <- list()
+bootstrap_counts <- list()
+if (isTRUE(params$run_inference)) for (id in main_ids) for (y in responses) {
+  selected <- fits[[id]][[y]]
+  point <- families[[id]]$predict(selected$object, inference_grid)
+  boot <- sapply(seq_along(bootstrap_rows), function(b) tryCatch({
+    object <- families[[id]]$fit(train[bootstrap_rows[[b]], ], y,
+                                 selected$configuration, 500L + b)
+    p <- families[[id]]$predict(object, inference_grid)
+    if (length(p) != nrow(inference_grid)) stop("Wrong bootstrap prediction length")
+    p
+  }, error = function(e) rep(NA_real_, nrow(inference_grid))))
+  valid <- colSums(!is.finite(boot)) == 0
+  key <- paste(id, y, sep = "_")
+  bootstrap_counts[[key]] <- data.frame(family = id, response = y,
+    attempted = settings$bootstrap_replicates, successful = sum(valid))
+  if (sum(valid) < ceiling(.9 * settings$bootstrap_replicates))
+    stop("Too many bootstrap fitting failures for ", key, "; review the specification.")
+  boot <- boot[, valid, drop = FALSE]
+  lower <- apply(boot, 1, quantile, .025); upper <- apply(boot, 1, quantile, .975)
+  pi <- seq_len(nrow(profile_grid)); si <- nrow(profile_grid) + seq_len(nrow(st_grid))
+  profiles[[key]] <- cbind(family = id, response = y, profile_grid,
+                            estimate = point[pi], lower = lower[pi], upper = upper[pi])
+  for (j in seq_len(nrow(groups))) {
+    a <- si[2*j - 1]; b <- si[2*j]; delta <- boot[b, ] - boot[a, ]
+    st_comparisons[[length(st_comparisons) + 1L]] <- cbind(family = id, response = y,
+      groups[j, ], St_from = .2, St_to = 1, difference = point[b] - point[a],
+      lower = quantile(delta, .025), upper = quantile(delta, .975), ratio = point[b]/point[a])
+  }
+  offset <- nrow(profile_grid) + nrow(st_grid)
+  for (i in seq_len(nrow(groups) - 1)) for (j in seq.int(i + 1, nrow(groups))) {
+    if (groups$Re[i] == groups$Re[j] || groups$Fr[i] == groups$Fr[j]) {
+      pair <- c(i, j)
+      pair <- if (groups$Re[i] == groups$Re[j]) pair[order(groups$Fr[pair], decreasing = TRUE)] else
+        pair[order(groups$Re[pair])]
+      a <- offset + pair[1]; b <- offset + pair[2]; delta <- boot[b, ] - boot[a, ]
+      condition_comparisons[[length(condition_comparisons) + 1L]] <- data.frame(
+        family = id, response = y, St = .5, from_Re = groups$Re[pair[1]],
+        to_Re = groups$Re[pair[2]], from_Fr = groups$Fr[pair[1]], to_Fr = groups$Fr[pair[2]],
+        difference = point[b] - point[a], lower = quantile(delta, .025),
+        upper = quantile(delta, .975), ratio = point[b]/point[a])
+    }
+  }
+}
+profile_table <- if (length(profiles)) do.call(rbind, profiles) else data.frame()
+st_table <- if (length(st_comparisons)) do.call(rbind, st_comparisons) else data.frame()
+condition_table <- if (length(condition_comparisons)) do.call(rbind, condition_comparisons) else data.frame()
+if (nrow(profile_table)) {
+  write_result(profile_table, "response-profiles.csv")
+  write_result(st_table, "st-comparisons.csv")
+  write_result(condition_table, "condition-comparisons.csv")
+  write_result(do.call(rbind, bootstrap_counts), "bootstrap-counts.csv")
+}
+```
+
+### Fitted relationships and response-specific interpretation
+
+These panels show all observed regimes. Compare curves within panels and read
+the numerical axes before comparing panels: response axes are logarithmic and
+panel ranges differ. Shading is approximate pointwise fit uncertainty, not a
+prediction interval. Detailed plotted values are exported as CSV.
+
+```{r}
+#| label: fitted-response-profiles
+#| fig-width: 12
+#| fig-height: 7
+#| fig-cap: "Response profiles by observed Re–Fr regime. Blue and orange identify the two current main families; additional families receive additional colours."
+if (nrow(profile_table)) {
+  colours <- setNames(grDevices::hcl.colors(length(main_ids), "Dark 3"), main_ids)
+  if (all(c("spline", "forest") %in% main_ids)) {
+    colours["spline"] <- "#146c94"; colours["forest"] <- "#bc5c24"
+  }
+  for (y in responses) {
+    par(mfrow = c(2, 4), mar = c(4, 4, 3, 1))
+    for (g in levels(train$group)) {
+      observed <- train[train$group == g, ]
+      selected <- profile_table[profile_table$response == y & profile_table$group == g, ]
+      limits <- range(c(observed[[y]], selected$estimate, selected$lower, selected$upper))
+      limits[1] <- max(limits[1], min(observed[[y]])/10)
+      plot(observed$St, observed[[y]], log = "y", pch = 16, cex = .6,
+           ylim = limits, xlab = "St", ylab = response_labels[y],
+           main = paste("Re", observed$Re[1], "Fr", observed$Fr[1]))
+      for (id in main_ids) {
+        d <- selected[selected$family == id, ]
+        polygon(c(d$St, rev(d$St)), c(pmax(d$lower, limits[1]), rev(pmax(d$upper, limits[1]))),
+                border = NA, col = adjustcolor(colours[id], alpha.f = .12))
+        lines(d$St, d$estimate, col = colours[id], lwd = 2)
+      }
+      points(observed$St, observed[[y]], pch = 16, cex = .6)
+      legend("topleft", main_ids, col = colours, lty = 1, bty = "n", cex = .65)
+    }
+  }
+  par(mfrow = c(1, 1))
+}
+```
+
+#### St: compare 0.2 with 1 within each observed regime
+
+An interval for the difference entirely above zero supports a positive fitted
+comparison; one spanning zero is inconclusive under this exploratory procedure.
+Identical proportional changes across groups may be imposed by a shared log-scale
+curve. Do not present such repeated ratios as independent discoveries. A different
+selected formula across responses is not itself proof that their effects differ.
+
+```{r}
+#| label: display-st-comparisons
+if (nrow(st_table)) show_table(st_table[c("family", "response", "Re", "Fr",
+  "difference", "lower", "upper", "ratio")], digits = 6)
+```
+
+#### Re and Fr: supported comparisons at St = 0.5
+
+Each comparison changes Re at fixed Fr, or changes Fr at fixed Re. No comparison
+uses the absent regime. These results answer whether apparent gravity effects
+depend on the flow regime and whether mean, spread and tails respond similarly.
+
+```{r}
+#| label: display-condition-comparisons
+if (nrow(condition_table)) {
+  # Display gravity comparisons in the notebook; the CSV also includes Re comparisons.
+  gravity_comparisons <- condition_table[condition_table$from_Re == condition_table$to_Re, ]
+  show_table(gravity_comparisons, digits = 6)
+}
+```
+
+#### Current findings to revisit when adding models
+
+For the current spline specification, increasing St from 0.2 to 1 increases fitted
+mean volume across the observed regimes. Both current families associate strong
+gravity with larger mean volume at Re = 90 and St = 0.5. The spline instead
+suggests a decrease at Re = 398; the forest comparison is uncertain there. Tail
+comparisons are more sensitive to the family, and the selected shared spline
+curves do not establish a clear St change in skewness or kurtosis over that interval.
+
+These are fitted relationships, not established causal laws. St represents
+particle inertia and Fr relative gravity influence, so condition-dependent
+relationships are physically plausible. The supplied slides note changing
+simulation domains/resolution. Confirm volume normalisation before interpreting
+large between-Re differences as purely physical effects. Treat the paragraphs
+here as interpretation to update after reviewing new families, not as results
+that additional models must reproduce.
+
+#### Forest importance
+
+The lecture's regression-forest importance is the decrease in RSS attributed to
+splits on a predictor, averaged over trees. It indicates predictive use within an
+outcome; it gives neither direction nor causal importance. Scores from different
+response scales should not be compared, and available split choices can affect
+importance. Supported fitted comparisons above supply direction.
+
+```{r}
+#| label: forest-importance
+if ("forest" %in% names(fits)) {
+  importance <- do.call(rbind, lapply(responses, function(y) {
+    x <- fits$forest[[y]]$object$model$variable.importance
+    data.frame(response = y, predictor = names(x), RSS_importance = as.numeric(x))
+  }))
+  write_result(importance, "forest-importance.csv")
+  show_table(importance, digits = 5)
+}
+```
+
+## Prediction exports and team decision
+
+Each family produces one CSV with the original test inputs and four predictions,
+in original row order. Separate response fits do not guarantee that all four
+outputs jointly describe a possible distribution. We report that limitation;
+no automatic moment adjustment is applied. Confirm whether the final submission
+requires SD or variance and the exact headers before using a candidate CSV.
+
+```{r}
+#| label: export-family-predictions
+for (id in names(families)) {
+  out <- test_raw[c("St", "Re", "Fr")]
+  for (y in responses) out[[y]] <- fits[[id]][[y]]$test_prediction
+  stopifnot(nrow(out) == nrow(test_raw),
+    identical(out[c("St", "Re", "Fr")], test_raw[c("St", "Re", "Fr")]))
+  write_result(out, paste0("predictions-", id, ".csv"))
+}
+
+# Edit only after the team's review of all registered families.
+# A family can legitimately be selected for more than one response.
+final_choice <- c(mean = NA_character_, sd = NA_character_,
+                  skew = NA_character_, kurt = NA_character_)
+if (all(!is.na(final_choice))) {
+  stopifnot(identical(names(final_choice), responses),
+            all(final_choice %in% names(families)))
+  final <- test_raw[c("St", "Re", "Fr")]
+  for (y in responses) final[[y]] <- fits[[final_choice[[y]]]][[y]]$test_prediction
+  write_result(final, "predictions-team-selected.csv")
+  write_result(data.frame(response = responses, family = final_choice), "team-selection.csv")
+}
+```
+
+## Extension and review checklist
+
+- Register a family before `evaluate-families`; ensure its prediction function
+  returns original-scale values in input row order. The quadratic example shows
+  the interface. Keep its grid modest for this small dataset.
+- Rerender to bring it into the common CV table, residual plots, bootstrap,
+  supported contrasts and prediction exports. Do not import scores from different
+  folds as if they were directly comparable.
+- Review selected specifications and candidate failures. Do not infer significance
+  from the smallest CV error, a selected interaction, or an importance ranking.
+- Update the scientific interpretation after comparing new families. Check the
+  same questions for each response rather than writing unrelated model summaries.
+- Agree final families per response; fill in `final_choice` only after that review.
+  Model-count diversity is not a reason to force a worse family onto a response.
+- For the later report, select the most informative diagnostics, comparisons and
+  figures. This working file retains detail and is not subject to the report's
+  four-page presentation limit.
+
+The remaining limits are the small designed dataset, missing regime, boundary
+prediction risk, residual misfit, approximate fit uncertainty, response-scale
+choices, and possible inconsistency between separately predicted summaries.
+None of the candidate files has been submitted automatically.
+
+```{r}
+#| label: reproducibility-record
+saveRDS(list(settings = settings, folds = fold,
+             configurations = lapply(fits, function(family)
+               lapply(family, function(x) x$configuration))),
+        file.path(results_dir, "analysis-settings.rds"))
+capture.output(sessionInfo(), file = file.path(results_dir, "session-info.txt"))
+```
