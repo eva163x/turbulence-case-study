@@ -21,13 +21,7 @@ params:
 editor: visual
 ---
 
-This working notebook retains the team's data cleaning, EDA and initial linear
-fits. The Predictive Modelling and Scientific Inference sections add Abbas's
-spline and random-forest comparison, with a common linear reference. Additional
-families can be registered at the marked extension point; they reuse the same
-folds, evaluation, diagnostics, inference and exports. This is the modelling
-notebook, not the final research report.
-
+This working notebook retains the team's data cleaning, EDA and initial linear fits. The Predictive Modelling and Scientific Inference sections add Abbas's spline and random-forest comparison, with a common linear reference. Additional families can be registered at the marked extension point; they reuse the same folds, evaluation, diagnostics, inference and exports. This is the modelling notebook, not the final research report.
 
 ```{r}
 #| label: setup
@@ -147,16 +141,9 @@ barplot(table(cleaned_data_train$Fr_cat),
 unique(cleaned_data_train$Fr)
 ```
 
-The data include three Re levels and three meaningful Fr regimes. In particular,
-`Fr = Inf` is the no-gravity limit, not an impossible or missing measurement.
-Smaller Fr represents stronger gravitational influence in this study. We retain
-all regimes and use the factors prepared above. The categorical representation
-matches the finite simulation levels and test design; large numerical values
-alone would not justify treating a variable as a factor.
+The data include three Re levels and three meaningful Fr regimes. In particular, `Fr = Inf` is the no-gravity limit, not an impossible or missing measurement. Smaller Fr represents stronger gravitational influence in this study. We retain all regimes and use the factors prepared above. The categorical representation matches the finite simulation levels and test design; large numerical values alone would not justify treating a variable as a factor.
 
-St describes particle inertia and is kept numeric. The slides consider values
-up to 3; modelling below examines whether the response relationships are linear
-or curved.
+St describes particle inertia and is kept numeric. The slides consider values up to 3; modelling below examines whether the response relationships are linear or curved.
 
 ```{r}
 #Re & Fr values remain same in train + test, so consider them factors
@@ -180,9 +167,7 @@ par(mfrow = c(2, 2)); plot(fit)
 par(mfrow = c(1, 1))
 ```
 
-The initial linear diagnostics motivate checking a response transformation and
-more flexible specifications. The shared CV comparison below evaluates those
-choices rather than assuming a transformation will improve prediction:
+The initial linear diagnostics motivate checking a response transformation and more flexible specifications. The shared CV comparison below evaluates those choices rather than assuming a transformation will improve prediction:
 
 -   fitted vals for mean are negative, so predicting log(mean) might be easier
 
@@ -202,23 +187,13 @@ par(mfrow = c(2, 2)); plot(fit_sd)
 par(mfrow = c(1, 1))
 ```
 
-
 ## Predictive Modelling
 
-Questions guiding the comparison are whether transformations improve prediction,
-whether nonlinear St effects help relative to a simple linear reference, and
-whether gravity-specific St relationships are supported. We fit each of the four
-summaries separately within a family and select settings using common CV folds.
-The earlier exploratory fits above remain available for comparison; the reference
-below uses joint Re–Fr group intercepts, so it is a distinct, explicitly stated
-specification.
+Questions guiding the comparison are whether transformations improve prediction, whether nonlinear St effects help relative to a simple linear reference, and whether gravity-specific St relationships are supported. We fit each of the four summaries separately within a family and select settings using common CV folds. The earlier exploratory fits above remain available for comparison; the reference below uses joint Re–Fr group intercepts, so it is a distinct, explicitly stated specification.
 
 ### Reuse the team's cleaned data
 
-The original cleaning formulas above produce the required mean, SD, skewness and
-ordinary kurtosis. No duplicate response transformation pipeline is introduced.
-The aliases below provide one stable interface for every registered model family.
-Raw moment columns are never used as predictors.
+The original cleaning formulas above produce the required mean, SD, skewness and ordinary kurtosis. No duplicate response transformation pipeline is introduced. The aliases below provide one stable interface for every registered model family. Raw moment columns are never used as predictors.
 
 ```{r}
 #| label: reuse-cleaned-data
@@ -239,9 +214,7 @@ write_result(data.frame(file = basename(input_files), md5 = unname(tools::md5sum
              "input-checksums.csv")
 ```
 
-There are `r nrow(train)` labelled simulations and `r nrow(test)` test settings.
-The Re = 398, Fr = 0.3 regime is absent. Inference below is restricted to supported
-regimes. The response ranges and boundary checks are recorded before fitting.
+There are `r nrow(train)` labelled simulations and `r nrow(test)` test settings. The Re = 398, Fr = 0.3 regime is absent. Inference below is restricted to supported regimes. The response ranges and boundary checks are recorded before fitting.
 
 ```{r}
 #| label: response-ranges
@@ -262,28 +235,13 @@ show_table(support[support$outside_group_St_range, ],
            caption = "Test settings outside their group's observed St range.")
 ```
 
-Positive responses span substantially different scales. We consider raw and log
-response models rather than assuming one transformation is suitable for every
-outcome. A log fit is converted back by exponentiation. This predicts a fitted
-geometric-scale response, not an automatically bias-corrected conditional
-arithmetic mean. All errors below are calculated after returning to the original
-response scale.
+Positive responses span substantially different scales. We consider raw and log response models rather than assuming one transformation is suitable for every outcome. A log fit is converted back by exponentiation. This predicts a fitted geometric-scale response, not an automatically bias-corrected conditional arithmetic mean. All errors below are calculated after returning to the original response scale.
 
 ### Common validation and model interfaces
 
-We use ordinary five-fold cross-validation, with identical folds for every family
-and response. Each candidate is fitted using four folds and predicts the fifth.
-Spline knots and parameters are learned from that training subset only.
-Candidate selection minimises original-scale MSE separately for each response.
-RMSE is its square root. Candidates that fail fitting or produce nonpositive
-validation predictions are recorded and excluded because these responses are
-positive in the supplied dataset.
+We use ordinary five-fold cross-validation, with identical folds for every family and response. Each candidate is fitted using four folds and predicts the fifth. Spline knots and parameters are learned from that training subset only. Candidate selection minimises original-scale MSE separately for each response. RMSE is its square root. Candidates that fail fitting or produce nonpositive validation predictions are recorded and excluded because these responses are positive in the supplied dataset.
 
-These are **CV model-selection estimates**, not independent final test errors.
-Selecting the lowest score can introduce optimism. Folds overlap in their training
-data, and fold wins are descriptive rather than independent significance tests.
-No hidden test response is used for tuning. Comparisons concern the observed
-regimes; they do not establish performance at new Re or Fr levels.
+These are **CV model-selection estimates**, not independent final test errors. Selecting the lowest score can introduce optimism. Folds overlap in their training data, and fold wins are descriptive rather than independent significance tests. No hidden test response is used for tuning. Comparisons concern the observed regimes; they do not establish performance at new Re or Fr levels.
 
 ```{r}
 #| label: shared-folds-and-interfaces
@@ -324,17 +282,11 @@ predict_forest <- function(object, newdata) {
 
 ### Family registry: add future modelling here
 
-Each registered family provides a candidate grid, a fit function, and a prediction
-function returning **one original-scale value per row**. The shared engine then
-performs CV, selects settings, refits, diagnoses and exports predictions. Main
-families also enter the common bootstrap and inference sections automatically.
+Each registered family provides a candidate grid, a fit function, and a prediction function returning **one original-scale value per row**. The shared engine then performs CV, selects settings, refits, diagnoses and exports predictions. Main families also enter the common bootstrap and inference sections automatically.
 
 #### Linear reference
 
-The fixed reference is $\log(Y)=\alpha_{g(Re,Fr)}+\beta St+\epsilon$.
-It supplies a simple comparison, rather than presuming nonlinear models improve
-every response. Group intercepts permit joint differences between the observed
-Re–Fr regimes.
+The fixed reference is $\log(Y)=\alpha_{g(Re,Fr)}+\beta St+\epsilon$. It supplies a simple comparison, rather than presuming nonlinear models improve every response. Group intercepts permit joint differences between the observed Re–Fr regimes.
 
 ```{r}
 #| label: register-linear-reference
@@ -359,12 +311,7 @@ or gravity-specific St shapes,
 
 $$h(Y)=\alpha_{g(Re,Fr)}+f_{Fr}(St)+\epsilon,$$
 
-where $h$ is identity or log. We compare 2, 3 and 4 spline degrees of freedom.
-The gravity-specific option shares its shape across Re within a gravity level.
-It is not eight unrelated curves. Natural splines are linear beyond their boundary
-knots on the modelled scale; that restriction does not guarantee extrapolation
-accuracy. Interpret fitted functions and contrasts rather than individual basis
-coefficients. A selected interaction is not, by itself, a significance test.
+where $h$ is identity or log. We compare 2, 3 and 4 spline degrees of freedom. The gravity-specific option shares its shape across Re within a gravity level. It is not eight unrelated curves. Natural splines are linear beyond their boundary knots on the modelled scale; that restriction does not guarantee extrapolation accuracy. Interpret fitted functions and contrasts rather than individual basis coefficients. A selected interaction is not, by itself, a significance test.
 
 ```{r}
 #| label: register-spline
@@ -387,14 +334,7 @@ families$spline <- list(
 
 #### Random forest regression
 
-The forest averages $B=500$ regression trees,
-$\widehat f(x)=B^{-1}\sum_{b=1}^{B}\widehat T_b(x)$. Each tree uses a bootstrap
-sample; each split considers a random subset of the three predictors. We compare
-one or two candidate predictors per split, minimum node-size settings 3 or 8,
-and raw or log responses. Considering all three predictors would be bagging under
-the lecture's distinction, so that option is excluded here. Tree splits can
-capture interactions without a prescribed interaction formula. Interpretation
-uses fitted comparisons and descriptive RSS importance, not causal effects.
+The forest averages $B=500$ regression trees, $\widehat f(x)=B^{-1}\sum_{b=1}^{B}\widehat T_b(x)$. Each tree uses a bootstrap sample; each split considers a random subset of the three predictors. We compare one or two candidate predictors per split, minimum node-size settings 3 or 8, and raw or log responses. Considering all three predictors would be bagging under the lecture's distinction, so that option is excluded here. Tree splits can capture interactions without a prescribed interaction formula. Interpretation uses fitted comparisons and descriptive RSS importance, not causal effects.
 
 ```{r}
 #| label: register-forest
@@ -407,24 +347,68 @@ families$forest <- list(
 )
 ```
 
-#### Team extension point
+#### Quadratic Regression
 
-Add a registration chunk **here, before evaluation**. Existing data preparation,
-folds, scoring and inference code do not need rewriting. This quadratic example
-is intentionally not executed; it illustrates the interface and is not a third
-claimed contribution. Replace its description and candidate grid for a new family.
-Additional families may require packages beyond the two main implementations.
+To investigate whether a simple nonlinear St effect can improve prediction relative to the linear reference, we fit quadratic regression models. For each response, we consider the specification
+
+$$ h(Y)=\alpha_{g(Re,Fr)}+\beta_1 St+\beta_2 St^2+\epsilon $$
+
+where (h) is either identity or log. Group intercepts account for differences across observed Re–Fr regimes, while the quadratic term allows the response to vary nonlinearly with St. This provides a simpler alternative to natural cubic splines, which allow more flexible nonlinear relationships. The St relationship is shared across regimes, so this model does not introduce additional St interactions. Both response scales are evaluated using the same five-fold cross-validation procedure, with model selection based on original-scale MSE.
 
 ```{r}
-#| label: example-new-family
-#| eval: false
 families$quadratic <- list(
   label = "Quadratic regression", role = "main",
   description = "Group intercepts with a quadratic St effect.",
-  grid = expand.grid(scale = c("raw", "log"), stringsAsFactors = FALSE),
+  grid = data.frame(scale = c("raw", "log")),
   fit = function(d, response, cfg, seed)
-    fit_regression(d, response, cfg, target ~ group + St + I(St^2)),
+    fit_regression(d, response, cfg,
+                   target ~ group + St + I(St^2)),
   predict = predict_regression
+)
+```
+
+#### Generalized additive regression
+
+To investigate whether a more flexible but interpretable nonlinear model can improve predictive performance, we consider generalized additive models (GAMs). For each response, we fit
+
+$$
+h(Y)=\alpha_{g(Re,Fr)}+f(St)+\epsilon
+$$
+
+where (h) is either identity or log, and (f(St)) is a penalized smooth function estimated from the training data. Group intercepts account for differences across the observed Re–Fr regimes, while the smooth term captures potentially nonlinear St effects without imposing a fixed polynomial form.
+
+Smoothness is estimated using restricted maximum likelihood (REML), with a limited spline basis to control complexity given the small sample size. As with the other model families, we compare raw and log response scales using the same five-fold cross-validation procedure and original-scale MSE. The shared St smooth provides a direct comparison with the existing spline specifications while allowing data-adaptive regularization of the nonlinear relationship.
+
+```{r}
+#| label: gam
+families$gam <- list(
+  label = "Generalized additive model",
+  role = "main",
+  description = "Group intercepts with a penalized smooth St effect.",
+
+  grid = data.frame(
+    scale = c("raw", "log")
+  ),
+
+  fit = function(d, response, cfg, seed) {
+    d <- prepare_target(d, response, cfg$scale)
+
+    model <- mgcv::gam(
+      target ~ group + s(St, k = 5),
+      data = d,
+      method = "REML"
+    )
+
+    list(model = model, scale = cfg$scale)
+  },
+
+  predict = function(object, newdata) {
+    z <- as.numeric(
+      predict(object$model, newdata = newdata)
+    )
+
+    if (object$scale == "log") exp(z) else z
+  }
 )
 ```
 
@@ -489,11 +473,21 @@ write_result(cv_predictions, "cv-predictions.csv")
 show_table(score_table[c("label", "response", "CV_RMSE", "configuration")], digits = 6)
 ```
 
-Compare errors **within a response** because the four summaries have different
-units and scales. A larger kurtosis RMSE does not mean kurtosis is intrinsically
-less accurately predicted than mean. More complex families need not beat the
-linear reference. Individual fold wins and relative errors can be explored below;
-neither establishes statistical significance.
+Compare errors **within a response** because the four summaries have different units and scales. A larger kurtosis RMSE does not mean kurtosis is intrinsically less accurately predicted than mean. More complex families need not beat the linear reference. Individual fold wins and relative errors can be explored below; neither establishes statistical significance.
+
+**Quadratic regression comparison**
+
+Quadratic regression improved prediction over the linear reference for mean and standard deviation, reducing CV RMSE from 0.011289 to 0.009161 and from 4.693302 to 2.993984, respectively. However, natural cubic splines continued to outperform quadratic regression for both responses, suggesting that additional flexibility in the St relationship, and potentially gravity-specific effects, are useful for prediction.
+
+For skewness and kurtosis, quadratic regression offered no meaningful improvement over the linear reference and was outperformed by random forests. Diagnostic plots also showed residual patterns and several poorly predicted observations. Thus, quadratic regression provides evidence that simple curvature alone is insufficient to achieve the best predictive performance across the four responses. We retain it as a comparison model but do not select it as the preferred specification for any response.
+
+**Generalized additive model comparison**
+
+Generalized additive models were evaluated to determine whether penalized smooth St effects could improve prediction while retaining an interpretable regression structure. We considered both raw and log response scales, with the log scale selected for all four responses.
+
+The GAM did not outperform the existing best-performing models. For mean and standard deviation, GAM CV RMSEs were 0.009893 and 3.064577, compared with 0.003965 and 2.403019 for natural cubic splines. For skewness and kurtosis, GAM CV RMSEs were 36.136066 and 16261.100024, compared with 31.810132 and 14137.323231 for random forests.
+
+Residual diagnostics indicated remaining prediction errors, particularly for extreme observations. These findings suggest that the shared smooth St specification does not provide sufficient improvement over the existing approaches. We therefore retain GAMs as comparison models but do not select them as the preferred predictive specification for any response.
 
 ```{r}
 #| label: fold-level-errors
@@ -506,10 +500,7 @@ write_result(fold_scores, "cv-fold-scores.csv")
 
 ### Prediction diagnostics
 
-Held-out predictions should lie near the diagonal. Residuals should be inspected
-for systematic patterns, unequal spread and unusual cases. Training residuals
-are descriptive fit diagnostics; the CV predictions supply the out-of-fold
-comparison. We do not discard unusual simulation settings automatically.
+Held-out predictions should lie near the diagonal. Residuals should be inspected for systematic patterns, unequal spread and unusual cases. Training residuals are descriptive fit diagnostics; the CV predictions supply the out-of-fold comparison. We do not discard unusual simulation settings automatically.
 
 ```{r}
 #| label: diagnostic-plots
@@ -538,34 +529,37 @@ for (id in names(families)) {
 par(mfrow = c(1, 1))
 ```
 
+Across the five evaluated model families, natural cubic spline regression achieved the lowest CV RMSE for mean and standard deviation, whereas random forest regression achieved the lowest CV RMSE for skewness and kurtosis. These results suggest that different distribution summaries benefit from different levels and forms of model flexibility.
+
+The selected spline specifications capture smooth nonlinear St relationships, while random forests allow nonlinearities and interactions without requiring explicit functional forms. We treat these as preliminary selections and examine their diagnostic adequacy, sensitivity to validation splits, and scientific interpretability before finalizing predictions.
 
 ## Scientific Inference
 
-The scientific questions are how each parameter relates to the cluster-volume
-distribution, whether those relationships are linear or nonlinear, whether the
-mean, spread and tails respond similarly, and whether input relationships depend
-on one another. The common inference procedure and family comparisons below
-address these questions. Additional registered main families automatically enter
-this section, with interpretation updated after reviewing their results.
+The scientific questions are how Reynolds number (Re), Froude number (Fr), and Stokes number (St) relate to the particle cluster-volume distribution, whether these relationships are linear or nonlinear, whether mean, spread, and tail behavior respond similarly, and whether the effects of the input parameters depend on one another.
+
+Following the five-family cross-validation comparison, we focus scientific inference on the best-performing specification for each response. Natural cubic spline regression is selected for mean and standard deviation, with CV RMSEs of 0.003965 and 2.403019, respectively. Random forest regression is selected for skewness and kurtosis, with CV RMSEs of 31.810132 and 14137.323231. Quadratic regression and generalized additive models did not outperform these selections.
+
+The spline models permit interpretation of smooth nonlinear St relationships, while random forests capture more flexible nonlinearities and interactions. We therefore investigate fitted response profiles and parameter contrasts separately for each selected model, using common comparisons across the four responses. These selections are based on predictive performance under the current five-fold validation design and remain subject to diagnostic and stability checks.
 
 ### Shared bootstrap inference
 
-Inference asks: how does St relate to each response; how do Re and Fr comparisons
-differ; and does a change in mean accompany a change in variability or tails?
-We inspect fitted functions and compare predictions at supported settings.
+Inference asks: how does St relate to each response; how do Re and Fr comparisons differ; and does a change in mean accompany a change in variability or tails? We inspect fitted functions and compare predictions at supported settings.
 
-For each selected main model, ordinary bootstrap samples draw simulation rows
-with replacement. We refit the fixed specification and take 2.5th and 97.5th
-percentiles for exploratory 95% fit intervals and differences. These are
-pointwise intervals, conditional on selected settings. They omit model-selection
-uncertainty, are not corrected for multiple comparisons, and are not future
-prediction intervals. Because the settings are designed simulations, interpret
-the intervals as approximate stability evidence. Replicate-level information
-needed to quantify the original moment estimates' uncertainty is unavailable.
+For each selected main model, ordinary bootstrap samples draw simulation rows with replacement. We refit the fixed specification and take 2.5th and 97.5th percentiles for exploratory 95% fit intervals and differences. These are pointwise intervals, conditional on selected settings. They omit model-selection uncertainty, are not corrected for multiple comparisons, and are not future prediction intervals. Because the settings are designed simulations, interpret the intervals as approximate stability evidence. Replicate-level information needed to quantify the original moment estimates' uncertainty is unavailable.
 
 ```{r}
 #| label: inference-grids
-main_ids <- names(families)[vapply(families, function(x) x$role == "main", logical(1))]
+
+# Selected response-specific model families
+selected_family <- c(mean = "spline", sd   = "spline", skew = "forest", kurt = "forest"
+)
+
+stopifnot(
+  identical(names(selected_family), responses), all(selected_family %in% names(families))
+)
+
+main_ids <- unique(unname(selected_family))
+
 groups <- unique(train[c("Re", "Fr", "Re_cat", "Fr_cat", "group")])
 profile_grid <- do.call(rbind, lapply(seq_len(nrow(groups)), function(j) {
   group <- groups[j, ]; observed <- train$St[train$group == group$group]
@@ -585,6 +579,8 @@ bootstrap_rows <- if (isTRUE(params$run_inference))
 profiles <- list(); st_comparisons <- list(); condition_comparisons <- list()
 bootstrap_counts <- list()
 if (isTRUE(params$run_inference)) for (id in main_ids) for (y in responses) {
+  if (id != selected_family[[y]]) next
+
   selected <- fits[[id]][[y]]
   point <- families[[id]]$predict(selected$object, inference_grid)
   boot <- sapply(seq_along(bootstrap_rows), function(b) tryCatch({
@@ -639,10 +635,7 @@ if (nrow(profile_table)) {
 
 ### Fitted relationships and response-specific interpretation
 
-These panels show all observed regimes. Compare curves within panels and read
-the numerical axes before comparing panels: response axes are logarithmic and
-panel ranges differ. Shading is approximate pointwise fit uncertainty, not a
-prediction interval. Detailed plotted values are exported as CSV.
+These panels show all observed regimes. Compare curves within panels and read the numerical axes before comparing panels: response axes are logarithmic and panel ranges differ. Shading is approximate pointwise fit uncertainty, not a prediction interval. Detailed plotted values are exported as CSV.
 
 ```{r}
 #| label: fitted-response-profiles
@@ -680,11 +673,7 @@ if (nrow(profile_table)) {
 
 #### St: compare 0.2 with 1 within each observed regime
 
-An interval for the difference entirely above zero supports a positive fitted
-comparison; one spanning zero is inconclusive under this exploratory procedure.
-Identical proportional changes across groups may be imposed by a shared log-scale
-curve. Do not present such repeated ratios as independent discoveries. A different
-selected formula across responses is not itself proof that their effects differ.
+An interval for the difference entirely above zero supports a positive fitted comparison; one spanning zero is inconclusive under this exploratory procedure. Identical proportional changes across groups may be imposed by a shared log-scale curve. Do not present such repeated ratios as independent discoveries. A different selected formula across responses is not itself proof that their effects differ.
 
 ```{r}
 #| label: display-st-comparisons
@@ -694,9 +683,7 @@ if (nrow(st_table)) show_table(st_table[c("family", "response", "Re", "Fr",
 
 #### Re and Fr: supported comparisons at St = 0.5
 
-Each comparison changes Re at fixed Fr, or changes Fr at fixed Re. No comparison
-uses the absent regime. These results answer whether apparent gravity effects
-depend on the flow regime and whether mean, spread and tails respond similarly.
+Each comparison changes Re at fixed Fr, or changes Fr at fixed Re. No comparison uses the absent regime. These results answer whether apparent gravity effects depend on the flow regime and whether mean, spread and tails respond similarly.
 
 ```{r}
 #| label: display-condition-comparisons
@@ -709,28 +696,13 @@ if (nrow(condition_table)) {
 
 #### Current findings to revisit when adding models
 
-For the current spline specification, increasing St from 0.2 to 1 increases fitted
-mean volume across the observed regimes. Both current families associate strong
-gravity with larger mean volume at Re = 90 and St = 0.5. The spline instead
-suggests a decrease at Re = 398; the forest comparison is uncertain there. Tail
-comparisons are more sensitive to the family, and the selected shared spline
-curves do not establish a clear St change in skewness or kurtosis over that interval.
+For the current spline specification, increasing St from 0.2 to 1 increases fitted mean volume across the observed regimes. Both current families associate strong gravity with larger mean volume at Re = 90 and St = 0.5. The spline instead suggests a decrease at Re = 398; the forest comparison is uncertain there. Tail comparisons are more sensitive to the family, and the selected shared spline curves do not establish a clear St change in skewness or kurtosis over that interval.
 
-These are fitted relationships, not established causal laws. St represents
-particle inertia and Fr relative gravity influence, so condition-dependent
-relationships are physically plausible. The supplied slides note changing
-simulation domains/resolution. Confirm volume normalisation before interpreting
-large between-Re differences as purely physical effects. Treat the paragraphs
-here as interpretation to update after reviewing new families, not as results
-that additional models must reproduce.
+These are fitted relationships, not established causal laws. St represents particle inertia and Fr relative gravity influence, so condition-dependent relationships are physically plausible. The supplied slides note changing simulation domains/resolution. Confirm volume normalisation before interpreting large between-Re differences as purely physical effects. Treat the paragraphs here as interpretation to update after reviewing new families, not as results that additional models must reproduce.
 
 #### Forest importance
 
-The lecture's regression-forest importance is the decrease in RSS attributed to
-splits on a predictor, averaged over trees. It indicates predictive use within an
-outcome; it gives neither direction nor causal importance. Scores from different
-response scales should not be compared, and available split choices can affect
-importance. Supported fitted comparisons above supply direction.
+The lecture's regression-forest importance is the decrease in RSS attributed to splits on a predictor, averaged over trees. It indicates predictive use within an outcome; it gives neither direction nor causal importance. Scores from different response scales should not be compared, and available split choices can affect importance. Supported fitted comparisons above supply direction.
 
 ```{r}
 #| label: forest-importance
@@ -746,11 +718,7 @@ if ("forest" %in% names(fits)) {
 
 ## Prediction exports and team decision
 
-Each family produces one CSV with the original test inputs and four predictions,
-in original row order. Separate response fits do not guarantee that all four
-outputs jointly describe a possible distribution. We report that limitation;
-no automatic moment adjustment is applied. Confirm whether the final submission
-requires SD or variance and the exact headers before using a candidate CSV.
+Each family produces one CSV with the original test inputs and four predictions, in original row order. Separate response fits do not guarantee that all four outputs jointly describe a possible distribution. We report that limitation; no automatic moment adjustment is applied. Confirm whether the final submission requires SD or variance and the exact headers before using a candidate CSV.
 
 ```{r}
 #| label: export-family-predictions
@@ -778,26 +746,14 @@ if (all(!is.na(final_choice))) {
 
 ## Extension and review checklist
 
-- Register a family before `evaluate-families`; ensure its prediction function
-  returns original-scale values in input row order. The quadratic example shows
-  the interface. Keep its grid modest for this small dataset.
-- Rerender to bring it into the common CV table, residual plots, bootstrap,
-  supported contrasts and prediction exports. Do not import scores from different
-  folds as if they were directly comparable.
-- Review selected specifications and candidate failures. Do not infer significance
-  from the smallest CV error, a selected interaction, or an importance ranking.
-- Update the scientific interpretation after comparing new families. Check the
-  same questions for each response rather than writing unrelated model summaries.
-- Agree final families per response; fill in `final_choice` only after that review.
-  Model-count diversity is not a reason to force a worse family onto a response.
-- For the later report, select the most informative diagnostics, comparisons and
-  figures. This working file retains detail and is not subject to the report's
-  four-page presentation limit.
+-   Register a family before `evaluate-families`; ensure its prediction function returns original-scale values in input row order. The quadratic example shows the interface. Keep its grid modest for this small dataset.
+-   Rerender to bring it into the common CV table, residual plots, bootstrap, supported contrasts and prediction exports. Do not import scores from different folds as if they were directly comparable.
+-   Review selected specifications and candidate failures. Do not infer significance from the smallest CV error, a selected interaction, or an importance ranking.
+-   Update the scientific interpretation after comparing new families. Check the same questions for each response rather than writing unrelated model summaries.
+-   Agree final families per response; fill in `final_choice` only after that review. Model-count diversity is not a reason to force a worse family onto a response.
+-   For the later report, select the most informative diagnostics, comparisons and figures. This working file retains detail and is not subject to the report's four-page presentation limit.
 
-The remaining limits are the small designed dataset, missing regime, boundary
-prediction risk, residual misfit, approximate fit uncertainty, response-scale
-choices, and possible inconsistency between separately predicted summaries.
-None of the candidate files has been submitted automatically.
+The remaining limits are the small designed dataset, missing regime, boundary prediction risk, residual misfit, approximate fit uncertainty, response-scale choices, and possible inconsistency between separately predicted summaries. None of the candidate files has been submitted automatically.
 
 ```{r}
 #| label: reproducibility-record
